@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>8-Set Multi-Monitor Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #0a0a0a;
+            --card-bg: #161616;
+            --border-color: #333;
+            --accent-green: #00ff41;
+            --accent-blue: #00d4ff;
+            --alert-red: #ff0000;
+        }
+
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: var(--bg-color); 
+            color: white; 
+            margin: 0; 
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Setup Screen */
+        #setup-screen {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .setup-card {
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .setup-card h3 { margin-top: 0; color: var(--accent-blue); font-size: 1rem; }
+        label { display: block; font-size: 0.8rem; color: #888; margin: 5px 0; }
+        input { 
+            width: 100%; padding: 8px; box-sizing: border-box; 
+            background: #222; border: 1px solid #444; color: white; border-radius: 4px;
+        }
+
+        .master-btn {
+            grid-column: span 4;
+            padding: 20px;
+            background: #007bff;
+            color: white;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1.2rem;
+            margin-top: 10px;
+        }
+
+        /* Monitor Dashboard */
+        #dashboard {
+            display: none;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(2, 1fr);
+            gap: 10px;
+            flex-grow: 1;
+            padding: 5px;
+        }
+
+        .set-container {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            padding: 8px;
+            position: relative;
+        }
+
+        .set-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            padding-bottom: 5px;
+            margin-bottom: 8px;
+        }
+
+        .set-title { font-weight: bold; color: #aaa; font-size: 0.9rem; }
+        .set-clock { font-family: monospace; color: var(--accent-green); font-size: 1.2rem; font-weight: bold; }
+
+        .bars-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex-grow: 1;
+        }
+
+        .bar-row {
+            display: flex;
+            align-items: center;
+            background: #222;
+            border: 1px solid #333;
+            height: 35px;
+            border-radius: 4px;
+            padding: 0 8px;
+            transition: background 0.2s;
+        }
+
+        .bar-num { width: 25px; font-weight: bold; color: #666; font-size: 0.9rem; }
+        .bar-status { flex-grow: 1; text-align: right; font-family: monospace; font-size: 0.9rem; }
+        .next-label { color: #555; font-size: 0.7rem; margin-right: 5px; }
+        .next-time { color: var(--accent-blue); font-weight: bold; }
+
+        /* Match Animation */
+        .match-flash {
+            background: var(--alert-red) !important;
+            border-color: #ff6666 !important;
+            transform: scale(1.02);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="setup-screen">
+        </div>
+
+    <div id="dashboard">
+        </div>
+
+    <script>
+        const totalSets = 8;
+        const barsPerSet = 6;
+        let setEngines = [];
+
+        // 1. Initialize Setup UI
+        const setupContainer = document.getElementById('setup-screen');
+        for (let i = 1; i <= totalSets; i++) {
+            setupContainer.innerHTML += `
+                <div class="setup-card">
+                    <h3>SET ${i}</h3>
+                    <label>CSV Day:</label>
+                    <input type="number" id="day-${i}" value="${i}" min="1">
+                    <label>Start Time:</label>
+                    <input type="text" id="time-${i}" value="12:00:00" placeholder="HH:MM:SS">
+                </div>
+            `;
+        }
+        setupContainer.innerHTML += `<button class="master-btn" onclick="startAll()">INITIALIZE DASHBOARD</button>`;
+
+        // 2. Start Logic
+        async function startAll() {
+            for (let i = 1; i <= totalSets; i++) {
+                const day = document.getElementById(`day-${i}`).value;
+                const startTimeStr = document.getElementById(`time-${i}`).value;
+                
+                // Create Engine Object
+                const engine = {
+                    id: i,
+                    day: day,
+                    currentTime: new Date(),
+                    schedule: [],
+                    isLoaded: false
+                };
+
+                const [h, m, s] = startTimeStr.split(':');
+                engine.currentTime.setHours(h, m, s || 0);
+
+                // Fetch Data
+                try {
+                    const resp = await fetch(`data/${day}.csv`);
+                    if (resp.ok) {
+                        const text = await resp.text();
+                        engine.schedule = parseCSV(text);
+                        engine.isLoaded = true;
+                    }
+                } catch (e) { console.error(`Set ${i} failed to load CSV`); }
+
+                setEngines.push(engine);
+            }
+
+            renderDashboard();
+            document.getElementById('setup-screen').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'grid';
+            
+            setInterval(masterTick, 1000);
+        }
+
+        function parseCSV(data) {
+            const lines = data.split('\n');
+            const sched = [];
+            for (let i = 1; i < lines.length; i++) {
+                const cols = lines[i].split(',');
+                if (cols.length >= 5) {
+                    sched.push({
+                        bar: cols[1].trim(),
+                        timeStr: `${cols[2].trim().padStart(2,'0')}:${cols[3].trim().padStart(2,'0')}:${cols[4].trim().padStart(2,'0')}`
+                    });
+                }
+            }
+            return sched;
+        }
+
+        // 3. Render Dashboard HTML
+        function renderDashboard() {
+            const board = document.getElementById('dashboard');
+            setEngines.forEach(set => {
+                let barsHtml = '';
+                for (let b = 6; b >= 1; b--) {
+                    barsHtml += `
+                        <div class="bar-row" id="s${set.id}-r${b}">
+                            <div class="bar-num">${b}</div>
+                            <div class="bar-status">
+                                <span class="next-label">NEXT</span>
+                                <span class="next-time" id="s${set.id}-next-${b}">--:--:--</span>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                board.innerHTML += `
+                    <div class="set-container">
+                        <div class="set-header">
+                            <span class="set-title">SET ${set.id}</span>
+                            <span class="set-clock" id="clock-${set.id}">00:00:00</span>
+                        </div>
+                        <div class="bars-list">${barsHtml}</div>
+                    </div>
+                `;
+            });
+        }
+
+        // 4. Master Loop
+        function masterTick() {
+            setEngines.forEach(set => {
+                // Increment internal clock
+                set.currentTime.setSeconds(set.currentTime.getSeconds() + 1);
+                const nowStr = set.currentTime.toTimeString().split(' ')[0];
+                document.getElementById(`clock-${set.id}`).innerText = nowStr;
+
+                // Update Bars
+                for (let b = 1; b <= 6; b++) {
+                    const barIdStr = b.toString();
+                    const rowEl = document.getElementById(`s${set.id}-r${b}`);
+                    const nextEl = document.getElementById(`s${set.id}-next-${b}`);
+
+                    // Check Match
+                    const match = set.schedule.find(item => item.bar === barIdStr && item.timeStr === nowStr);
+                    if (match) {
+                        rowEl.classList.add('match-flash');
+                        setTimeout(() => rowEl.classList.remove('match-flash'), 2000);
+                    }
+
+                    // Find Next
+                    const upcoming = set.schedule
+                        .filter(item => item.bar === barIdStr && item.timeStr > nowStr)
+                        .sort((a, b) => a.timeStr.localeCompare(b.timeStr))[0];
+
+                    nextEl.innerText = upcoming ? upcoming.timeStr : "DONE";
+                }
+            });
+        }
+    </script>
+</body>
+</html>
