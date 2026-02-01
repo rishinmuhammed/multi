@@ -26,7 +26,6 @@
             overflow: hidden;
         }
 
-        /* Setup Screen */
         #setup-screen {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -62,7 +61,6 @@
             margin-top: 10px;
         }
 
-        /* Monitor Dashboard */
         #dashboard {
             display: none;
             grid-template-columns: repeat(4, 1fr);
@@ -117,7 +115,6 @@
         .next-label { color: #555; font-size: 0.7rem; margin-right: 5px; }
         .next-time { color: var(--accent-blue); font-weight: bold; }
 
-        /* Match Animation */
         .match-flash {
             background: var(--alert-red) !important;
             border-color: #ff6666 !important;
@@ -127,51 +124,61 @@
 </head>
 <body>
 
-    <div id="setup-screen">
-        </div>
-
-    <div id="dashboard">
-        </div>
+    <div id="setup-screen"></div>
+    <div id="dashboard"></div>
 
     <script>
-        const totalSets = 8;
-        const barsPerSet = 6;
+        // 1. Define specific clock configurations
+        const clockConfigs = [
+            { name: "+1", offsetHrs: 1, shiftSecs: 0 },
+            { name: "+1.25", offsetHrs: 1, shiftSecs: 150 },
+            { name: "+3.275", offsetHrs: 3.5, shiftSecs: -150 },
+            { name: "+3.30", offsetHrs: 3.5, shiftSecs: 0 },
+            { name: "+11.30", offsetHrs: 11.5, shiftSecs: 0 },
+            { name: "+11.325", offsetHrs: 11.5, shiftSecs: 150 },
+            { name: "+13.975", offsetHrs: 14, shiftSecs: -150 },
+            { name: "+14", offsetHrs: 14, shiftSecs: 0 }
+        ];
+
         let setEngines = [];
 
-        // 1. Initialize Setup UI
+        // 2. Initialize Setup UI
         const setupContainer = document.getElementById('setup-screen');
-        for (let i = 1; i <= totalSets; i++) {
+        clockConfigs.forEach((config, index) => {
             setupContainer.innerHTML += `
                 <div class="setup-card">
-                    <h3>SET ${i}</h3>
+                    <h3>CLOCK ${config.name}</h3>
                     <label>CSV Day:</label>
-                    <input type="number" id="day-${i}" value="${i}" min="1">
-                    <label>Start Time:</label>
-                    <input type="text" id="time-${i}" value="12:00:00" placeholder="HH:MM:SS">
+                    <input type="number" id="day-${index}" value="${index + 1}" min="1">
+                    <p style="font-size: 0.7rem; color: #555; margin: 5px 0;">Automatically calculating UTC offset...</p>
                 </div>
             `;
-        }
+        });
         setupContainer.innerHTML += `<button class="master-btn" onclick="startAll()">INITIALIZE DASHBOARD</button>`;
 
-        // 2. Start Logic
+        // 3. Helper to get calculated time
+        function getCalculatedTime(offsetHrs, shiftSecs) {
+            const now = new Date();
+            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            return new Date(utc + (offsetHrs * 3600000) + (shiftSecs * 1000));
+        }
+
         async function startAll() {
-            for (let i = 1; i <= totalSets; i++) {
+            for (let i = 0; i < clockConfigs.length; i++) {
                 const day = document.getElementById(`day-${i}`).value;
-                const startTimeStr = document.getElementById(`time-${i}`).value;
-                
-                // Create Engine Object
+                const config = clockConfigs[i];
+
                 const engine = {
                     id: i,
+                    name: config.name,
                     day: day,
-                    currentTime: new Date(),
+                    offsetHrs: config.offsetHrs,
+                    shiftSecs: config.shiftSecs,
+                    currentTime: getCalculatedTime(config.offsetHrs, config.shiftSecs),
                     schedule: [],
                     isLoaded: false
                 };
 
-                const [h, m, s] = startTimeStr.split(':');
-                engine.currentTime.setHours(h, m, s || 0);
-
-                // Fetch Data
                 try {
                     const resp = await fetch(`data/${day}.csv`);
                     if (resp.ok) {
@@ -179,7 +186,7 @@
                         engine.schedule = parseCSV(text);
                         engine.isLoaded = true;
                     }
-                } catch (e) { console.error(`Set ${i} failed to load CSV`); }
+                } catch (e) { console.error(`Set ${config.name} failed to load CSV`); }
 
                 setEngines.push(engine);
             }
@@ -206,7 +213,6 @@
             return sched;
         }
 
-        // 3. Render Dashboard HTML
         function renderDashboard() {
             const board = document.getElementById('dashboard');
             setEngines.forEach(set => {
@@ -226,7 +232,7 @@
                 board.innerHTML += `
                     <div class="set-container">
                         <div class="set-header">
-                            <span class="set-title">SET ${set.id}</span>
+                            <span class="set-title">CLOCK ${set.name}</span>
                             <span class="set-clock" id="clock-${set.id}">00:00:00</span>
                         </div>
                         <div class="bars-list">${barsHtml}</div>
@@ -235,28 +241,24 @@
             });
         }
 
-        // 4. Master Loop
         function masterTick() {
             setEngines.forEach(set => {
-                // Increment internal clock
-                set.currentTime.setSeconds(set.currentTime.getSeconds() + 1);
+                // Sync to calculated time precisely every second
+                set.currentTime = getCalculatedTime(set.offsetHrs, set.shiftSecs);
                 const nowStr = set.currentTime.toTimeString().split(' ')[0];
                 document.getElementById(`clock-${set.id}`).innerText = nowStr;
 
-                // Update Bars
                 for (let b = 1; b <= 6; b++) {
                     const barIdStr = b.toString();
                     const rowEl = document.getElementById(`s${set.id}-r${b}`);
                     const nextEl = document.getElementById(`s${set.id}-next-${b}`);
 
-                    // Check Match
                     const match = set.schedule.find(item => item.bar === barIdStr && item.timeStr === nowStr);
                     if (match) {
                         rowEl.classList.add('match-flash');
                         setTimeout(() => rowEl.classList.remove('match-flash'), 2000);
                     }
 
-                    // Find Next
                     const upcoming = set.schedule
                         .filter(item => item.bar === barIdStr && item.timeStr > nowStr)
                         .sort((a, b) => a.timeStr.localeCompare(b.timeStr))[0];
